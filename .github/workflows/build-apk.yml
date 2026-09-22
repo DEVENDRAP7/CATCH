@@ -1,0 +1,65 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # This repo ships only lib/ + pubspec.yaml (no Flutter SDK was
+      # available to scaffold platform folders when the app was written).
+      # `flutter create .` on an existing project only fills in whatever's
+      # missing — it never touches lib/, pubspec.yaml, or other existing
+      # files — so this safely (re)generates android/ on every run.
+      - name: Scaffold Android platform folder
+        run: flutter create --platforms=android --project-name catch_app --org com.catchapp .
+
+      - name: Use the Catch app name on the home screen
+        run: |
+          sed -i 's/android:label="catch_app"/android:label="Catch"/' android/app/src/main/AndroidManifest.xml
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze (non-blocking)
+        run: flutter analyze
+        continue-on-error: true
+
+      - name: Test (non-blocking)
+        run: flutter test
+        continue-on-error: true
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: catch-app-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
+      - name: Publish/update the "latest build" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-build
+          name: Catch — latest build
+          body: |
+            Automatically built from the latest push to `main` (commit ${{ github.sha }}).
+            Download `app-release.apk` below and install it on an Android device
+            (enable "install from unknown sources" if prompted).
+          prerelease: true
+          files: build/app/outputs/flutter-apk/app-release.apk
